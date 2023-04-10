@@ -1,0 +1,15 @@
+[
+  {
+    "arguments": [
+      "/usr/bin/g++",
+      "--std=c++17",
+      "-c",
+      "-o",
+      "demo_instance.o",
+      "demo_instance.cpp"
+    ],
+    "directory": "/home/moritz/Documents/Studium/Praktikum/sketches/lcm_proof_of_concept/evaluation/echo_test",
+    "file": "/home/moritz/Documents/Studium/Praktikum/sketches/lcm_proof_of_concept/evaluation/echo_test/demo_instance.cpp",
+    "output": "/home/moritz/Documents/Studium/Praktikum/sketches/lcm_proof_of_concept/evaluation/echo_test/demo_instance.o"
+  }
+]

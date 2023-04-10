@@ -1,0 +1,7 @@
+package exlcm;
+
+struct test_msg {
+    int64_t msgid;
+    int64_t size;
+    byte data[size];
+}
