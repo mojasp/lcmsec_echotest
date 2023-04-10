@@ -68,11 +68,12 @@ class ThroughputClient {
             msgsize -
             2 * 64); // subtract size for dynamci array as well as msgid
         recv_count = 0;
-        done=false;
+        done = false;
 
         std::thread recvthread([this]() {
             while (!done) {
-                inst.handleTimeout(1000); //so we finish sucessfully if no more messages are queued up
+                inst.handleTimeout(1000); // so we finish sucessfully if no more
+                                          // messages are queued up
             };
         });
 
@@ -105,9 +106,10 @@ class ThroughputClient {
         recvthread.join();
 
         std::cout << "\t" << recv_count << "/" << num_messages;
-        std::cout << " - got " << 100.0*recv_count / num_messages
-                  << "percent" << std::endl;
-        fs << target_throughput_mbps << "," << 100.0*recv_count/num_messages << "\n";
+        std::cout << " - got " << 100.0 * recv_count / num_messages << "percent"
+                  << std::endl;
+        fs << target_throughput_mbps << "," << 100.0 * recv_count / num_messages
+           << "\n";
     }
 };
 
@@ -116,12 +118,15 @@ class LatencyClient {
     lcm::LCM &inst;
     std::ofstream fs;
     const int num_messages = 1000;
+    lcm::Subscription* subscription;
 
   public:
-    ~LatencyClient() { fs.close(); }
+    ~LatencyClient() { fs.close(); 
+        inst.unsubscribe(subscription);
+    }
 
     LatencyClient(lcm::LCM &inst, std::string filename) : inst(inst) {
-        inst.subscribe("channel2", &LatencyClient::handleMessage, this);
+        subscription = inst.subscribe("channel2", &LatencyClient::handleMessage, this);
 
         fs.open(filename);
         // create csv header
@@ -212,12 +217,12 @@ void run_sim(std::string mcast_url,
         assert(*r == role::client);
         auto security_str = (security) ? "_secure" : "";
         std::cout << "----CLIENT-----" << std::endl;
-#if 0
+        {
             std::cout << "----RUNNING ECHO TEST-----" << std::endl;
-            LatencyClient c(*lcminst, std::string("latency_results_full") +
-                                          security_str + ".csv");
+            LatencyClient c1(*lcminst, std::string("latency_results_full") +
+                                           security_str + ".csv");
             std::cout << "Startup run-discard: ";
-            c.run(10, true);
+            c1.run(10, true);
 
             std::cout << std::endl;
             // fit log base 10 scale with 25 measurements between 100 and 100000
@@ -225,17 +230,17 @@ void run_sim(std::string mcast_url,
                  {100,   133,   177,   237,   316,   421,   562,   749,   1000,
                   1333,  1778,  2371,  3162,  4217,  5623,  7499,  10000, 13335,
                   17783, 23713, 31623, 42170, 56234, 74989, 100000}) {
-                c.run(i);
+                c1.run(i);
             }
-#endif
+        }
+
         std::cout << "----RUNNING THROUGHPUT TEST-----" << std::endl;
-        ThroughputClient c(*lcminst, std::string("throughput_results") +
-                                         security_str + ".csv");
-        for (int i : {
-           // 1, 2, 4, 8, 12,16,
-            20, 24, 28, 32 }) {
+        ThroughputClient c2(*lcminst, std::string("throughput_results") +
+                                          security_str + ".csv");
+        for (int i : {// 1, 2, 4, 8, 12,16,
+                      20, 24, 28, 32}) {
             std::cout << "attempting bw of " << i << "MB/s - ";
-            c.run(i);
+            c2.run(i);
         }
     }
 }
