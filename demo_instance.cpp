@@ -1,3 +1,5 @@
+#include <atomic>
+#include <ratio>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -28,6 +30,84 @@ class echohandler {
     void handleMessage(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
                        const exlcm::test_msg *msg) {
         inst.publish("channel2", msg);
+    }
+};
+
+class ThroughputClient {
+  private:
+    lcm::LCM &inst;
+    std::ofstream fs;
+    const int msgsize = 1000; // use fixed 1KB message
+    int recv_count{
+        0}; // no need to use atomic - only read after thread finishes
+    std::atomic_bool done{false};
+
+    exlcm::test_msg my_data{0};
+
+  public:
+    ~ThroughputClient() { fs.close(); }
+
+    ThroughputClient(lcm::LCM &inst, std::string filename) : inst(inst) {
+        fs.open(filename);
+        // create csv header
+        fs << "mbps, percent_received\n";
+
+        inst.subscribe("channel2", &ThroughputClient::handleMessage, this);
+    }
+
+    std::chrono::time_point<std::chrono::high_resolution_clock> sent;
+    void handleMessage(const lcm::ReceiveBuffer *rbuf, const std::string &chan,
+                       const exlcm::test_msg *msg) {
+        if (msg->msgid >= 0)
+            recv_count++; // otherwise we are in warmup stage
+    }
+
+    void run(double target_throughput_mbps) {
+        my_data = exlcm::test_msg{0};
+        my_data.data.resize(
+            msgsize -
+            2 * 64); // subtract size for dynamci array as well as msgid
+        recv_count = 0;
+        done=false;
+
+        std::thread recvthread([this]() {
+            while (!done) {
+                inst.handleTimeout(1000); //so we finish sucessfully if no more messages are queued up
+            };
+        });
+
+        // discard a few messages for cache reasons
+        auto discarded = 5;
+        for (int i = 0; i < discarded; i++) {
+            my_data.msgid = -1;
+        }
+        // and allow the server some time to catch its breath
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+        my_data.msgid = 1; // valid msgid so server doesn't discard
+
+        int num_messages = 100000;
+        double msg_per_second = target_throughput_mbps * 1'000'000 / msgsize;
+        double msg_interval_us = 1'000'000 / msg_per_second;
+        std::chrono::microseconds msg_interval{
+            static_cast<int>(msg_interval_us)};
+        std::cout << "msg_interval_us: " << msg_interval.count() << "\n";
+
+        auto start = std::chrono::high_resolution_clock::now();
+        for (int i = 0; i < num_messages; i++) {
+            auto next_msg_tp = start + i * msg_interval;
+            std::this_thread::sleep_until(next_msg_tp);
+            inst.publish("channel1", &my_data);
+        }
+
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+        done = true;
+        recvthread.join();
+
+        std::cout << "\t" << recv_count << "/" << num_messages;
+        std::cout << " - got " << 100.0*recv_count / num_messages
+                  << "percent" << std::endl;
+        fs << target_throughput_mbps << "," << 100.0*recv_count/num_messages << "\n";
     }
 };
 
@@ -84,19 +164,7 @@ class LatencyClient {
             inst.handle();
             my_data.msgid++;
         }
-        // // remove 10 max and min elements
-        // assert(results.size() == num_messages);
-        // for (int i = 0; i < 30; i++) {
-        //     auto max = std::max_element(results.begin(), results.end());
-        //     auto min = std::min_element(results.begin(), results.end());
-        //     results.erase(max);
-        //     results.erase(min);
-        // }
-        //
-        // auto avg = static_cast<double>(
-        //                std::accumulate(results.begin(), results.end(), 0)) /
-        //            results.size();
-        // std::cout << "got average " << avg << " us" << std::endl;
+
         if (!warmup) {
             for (int i : results) {
                 fs << datasize << "," << i << "\n";
@@ -142,19 +210,31 @@ void run_sim(std::string mcast_url,
         }
     } else {
         assert(*r == role::client);
-        std::cout << "----CLIENT-----" << std::endl;
         auto security_str = (security) ? "_secure" : "";
-        LatencyClient c(*lcminst, std::string("latency_results_full") +
-                                      security_str + ".csv");
-        std::cout << "Startup run-discard: ";
-        c.run(10, true);
+        std::cout << "----CLIENT-----" << std::endl;
+#if 0
+            std::cout << "----RUNNING ECHO TEST-----" << std::endl;
+            LatencyClient c(*lcminst, std::string("latency_results_full") +
+                                          security_str + ".csv");
+            std::cout << "Startup run-discard: ";
+            c.run(10, true);
 
-        std::cout << std::endl;
-        // fit log base 10 scale with 25 measurements between 100 and 100000
-        for (int i :
-             {100,   133,   177,   237,   316,   421,   562,   749,   1000,
-              1333,  1778,  2371,  3162,  4217,  5623,  7499,  10000, 13335,
-              17783, 23713, 31623, 42170, 56234, 74989, 100000}) {
+            std::cout << std::endl;
+            // fit log base 10 scale with 25 measurements between 100 and 100000
+            for (int i :
+                 {100,   133,   177,   237,   316,   421,   562,   749,   1000,
+                  1333,  1778,  2371,  3162,  4217,  5623,  7499,  10000, 13335,
+                  17783, 23713, 31623, 42170, 56234, 74989, 100000}) {
+                c.run(i);
+            }
+#endif
+        std::cout << "----RUNNING THROUGHPUT TEST-----" << std::endl;
+        ThroughputClient c(*lcminst, std::string("throughput_results") +
+                                         security_str + ".csv");
+        for (int i : {
+           // 1, 2, 4, 8, 12,16,
+            20, 24, 28, 32 }) {
+            std::cout << "attempting bw of " << i << "MB/s - ";
             c.run(i);
         }
     }
@@ -196,8 +276,9 @@ int main(int argc, char **argv) {
         std::vector<lcm_security_parameters> sec_params;
 
         ////////////////////////////////////////////////////////////////////////
-        // INFO: The parsing of the config file we do here makes little sense///
-        // for this application. it was mostly copy and pasted for simplicity///
+        // INFO: The parsing of the config file we do here makes little
+        // sense/// for this application. it was mostly copy and pasted for
+        // simplicity///
         ////////////////////////////////////////////////////////////////////////
 
         std::string algorithm =
